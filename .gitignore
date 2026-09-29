@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+DerivedData/
+*.dSYM/
+*.xcuserstate
+DiskWidget_*.swift
+!DiskWidget.swift
+*_云端GPT评审.swift
+main.swift
+docs/*.tmp.png
+release/
