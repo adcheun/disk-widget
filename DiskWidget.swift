@@ -464,7 +464,10 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
     backgroundColor = .clear
     hasShadow = true
     level = Self.desktopWidgetLevel
-    collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+    // Keep each card in the Space where it was created, like a native
+    // desktop widget. Do not use `.canJoinAllSpaces`: that makes the cards
+    // remain visible while the user swipes to another desktop.
+    collectionBehavior = [.stationary, .ignoresCycle]
     hidesOnDeactivate = false
     ignoresMouseEvents = false
     acceptsMouseMovedEvents = true

@@ -9,3 +9,4 @@ DiskWidget_*.swift
 main.swift
 docs/*.tmp.png
 release/
+backups/
