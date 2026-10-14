@@ -1,0 +1,1 @@
+1c53f11e703d1754fc60ab3be60cc3194cfda94b8ef7fcae9e328e400ffe7de1  release/DiskWidget-1.0.2-macOS-arm64.zip

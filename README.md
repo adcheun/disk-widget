@@ -84,7 +84,7 @@ python3 tests/run_window_regressions.py
 
 ## Release
 
-Release 包为 Apple Silicon macOS 构建，下载后将 `DiskWidget.app` 拖入“应用程序”，再到系统设置的“登录项”中加入它即可开机启动。源码和构建脚本仍然包含在仓库中。
+当前 Release 为 `v1.0.2`，提供 Apple Silicon macOS 安装包。下载 `release/DiskWidget-1.0.2-macOS-arm64.zip`，解压后将 `DiskWidget.app` 拖入“应用程序”，再到系统设置的“登录项”中加入它即可开机启动。可使用 `release/SHA256SUMS-1.0.2.txt` 校验下载文件。源码和构建脚本仍然包含在仓库中。
 
 ## 许可证
 
