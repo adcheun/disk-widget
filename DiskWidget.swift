@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 
 // MARK: - Layout
 
@@ -29,6 +30,7 @@ struct WidgetLayout {
   var accentBlue: CGFloat = 1.0
   var showDiskImagesInWidget: Bool = true
   var showMenuBarItem: Bool = true
+  var dimWhenDesktopInactive: Bool = false
 
   init(defaults: UserDefaults = .standard, loadSavedValues: Bool = true) {
     guard loadSavedValues else { return }
@@ -67,6 +69,9 @@ struct WidgetLayout {
     if defaults.object(forKey: "disk-widget-show-menu-bar-item") != nil {
       showMenuBarItem = defaults.bool(forKey: "disk-widget-show-menu-bar-item")
     }
+    if defaults.object(forKey: "disk-widget-dim-when-inactive") != nil {
+      dimWhenDesktopInactive = defaults.bool(forKey: "disk-widget-dim-when-inactive")
+    }
     normalize()
   }
 
@@ -87,35 +92,36 @@ struct WidgetLayout {
   }
 
   mutating func normalize() {
-    width = min(max(width, 180), 360)
-    height = min(max(height, 72), 120)
-    iconSize = min(max(iconSize, 16), 48)
-    ringSize = min(max(ringSize, 34), 60)
-    ejectSize = min(max(ejectSize, 16), 36)
-    cornerRadius = min(max(cornerRadius, 8), min(28, height / 2))
-    nameFontSize = min(max(nameFontSize, 10), 18)
-    statusFontSize = min(max(statusFontSize, 8), 13)
-    ringTextFontSize = min(max(ringTextFontSize, 7), 16)
+    width = min(max(width.rounded(), 180), 360)
+    height = min(max(height.rounded(), 72), 120)
+    iconSize = min(max(iconSize.rounded(), 16), 48)
+    ringSize = min(max(ringSize.rounded(), 34), 60)
+    ejectSize = min(max(ejectSize.rounded(), 16), 36)
+    cornerRadius = min(max(cornerRadius.rounded(), 8), min(28, (height / 2).rounded()))
+    nameFontSize = min(max(nameFontSize.rounded(), 10), 18)
+    statusFontSize = min(max(statusFontSize.rounded(), 8), 13)
+    ringTextFontSize = min(max(ringTextFontSize.rounded(), 7), 16)
     opacity = min(max(opacity, 0), 1)
-    stackSpacing = min(max(stackSpacing, 4), 40)
+    stackSpacing = min(max(stackSpacing.rounded(), 4), 40)
     accentRed = min(max(accentRed, 0), 1)
     accentGreen = min(max(accentGreen, 0), 1)
     accentBlue = min(max(accentBlue, 0), 1)
 
-    iconX = min(max(iconX, 0), max(0, width - iconSize))
-    nameX = min(max(nameX, 0), max(0, width - 24))
-    statusX = min(max(statusX, 0), max(0, width - 24))
-    ringX = min(max(ringX, 0), max(0, width - ringSize))
-    ejectX = min(max(ejectX, 0), max(0, width - ejectSize))
+    iconX = min(max(iconX.rounded(), 0), max(0, width - iconSize))
+    nameX = min(max(nameX.rounded(), 0), max(0, width - 24))
+    statusX = min(max(statusX.rounded(), 0), max(0, width - 24))
+    ringX = min(max(ringX.rounded(), 0), max(0, width - ringSize))
+    ejectX = min(max(ejectX.rounded(), 0), max(0, width - ejectSize))
 
-    let iconYLimit = max(0, (height - iconSize) / 2)
-    let ringYLimit = max(0, (height - ringSize) / 2)
-    let ejectYLimit = max(0, (height - ejectSize) / 2)
-    iconY = min(max(iconY, -iconYLimit), iconYLimit)
-    ringY = min(max(ringY, -ringYLimit), ringYLimit)
-    ejectY = min(max(ejectY, -ejectYLimit), ejectYLimit)
-    nameY = min(max(nameY, -height / 2), height / 2)
-    statusBottom = min(max(statusBottom, 2), max(2, height - statusFontSize - 2))
+    let iconYLimit = max(0, ((height - iconSize) / 2).rounded())
+    let ringYLimit = max(0, ((height - ringSize) / 2).rounded())
+    let ejectYLimit = max(0, ((height - ejectSize) / 2).rounded())
+    iconY = min(max(iconY.rounded(), -iconYLimit), iconYLimit)
+    ringY = min(max(ringY.rounded(), -ringYLimit), ringYLimit)
+    ejectY = min(max(ejectY.rounded(), -ejectYLimit), ejectYLimit)
+    let halfHeight = (height / 2).rounded()
+    nameY = min(max(nameY.rounded(), -halfHeight), halfHeight)
+    statusBottom = min(max(statusBottom.rounded(), 2), max(2, height - statusFontSize - 2))
   }
 
   func normalized() -> WidgetLayout {
@@ -152,6 +158,7 @@ struct WidgetLayout {
     defaults.set(Double(layout.accentBlue), forKey: "disk-widget-accent-blue")
     defaults.set(layout.showDiskImagesInWidget, forKey: "disk-widget-show-disk-images")
     defaults.set(layout.showMenuBarItem, forKey: "disk-widget-show-menu-bar-item")
+    defaults.set(layout.dimWhenDesktopInactive, forKey: "disk-widget-dim-when-inactive")
   }
 }
 
@@ -163,6 +170,8 @@ final class DiskCardView: NSView {
   var highlightsDrop: ((Bool) -> Void)?
   var opensDisk: (() -> Void)?
   var hoverChanged: ((Bool) -> Void)?
+  var pressChanged: ((Bool) -> Void)?
+  var appearanceChanged: (() -> Void)?
   var showsSettingsMenu: ((NSEvent) -> Void)?
   var groupDragBegan: (() -> Void)?
   var groupDragChanged: ((NSPoint) -> Void)?
@@ -176,6 +185,19 @@ final class DiskCardView: NSView {
   private var dragStart: NSPoint?
   private var windowStart: NSPoint?
   private var didDragWindow = false
+
+  func cancelActiveDrag() {
+    dragStart = nil
+    windowStart = nil
+    didDragWindow = false
+    dragMode = .none
+    pressChanged?(false)
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    appearanceChanged?()
+  }
 
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
@@ -202,22 +224,28 @@ final class DiskCardView: NSView {
     windowStart = window.frame.origin
     didDragWindow = false
     dragMode = .none
+    pressChanged?(true)
   }
 
   override func mouseDragged(with event: NSEvent) {
     guard let dragStart, let windowStart, let window else { return }
     let current = NSEvent.mouseLocation
-    let dx = current.x - dragStart.x
-    let dy = current.y - dragStart.y
+    let dx = (current.x - dragStart.x).rounded()
+    let dy = (current.y - dragStart.y).rounded()
     guard abs(dx) > 4 || abs(dy) > 4 else { return }
 
     if !didDragWindow {
       didDragWindow = true
+      pressChanged?(false)
       dragMode = event.modifierFlags.contains(.option) ? .reorder : .group
       switch dragMode {
-      case .reorder: reorderDragBegan?()
-      case .group: groupDragBegan?()
-      case .none: break
+      case .reorder:
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+        reorderDragBegan?()
+      case .group:
+        groupDragBegan?()
+      case .none:
+        break
       }
     }
 
@@ -237,6 +265,7 @@ final class DiskCardView: NSView {
   }
 
   override func mouseUp(with event: NSEvent) {
+    pressChanged?(false)
     if didDragWindow {
       switch dragMode {
       case .reorder: reorderDragEnded?()
@@ -246,13 +275,11 @@ final class DiskCardView: NSView {
     } else if event.clickCount == 2 {
       opensDisk?()
     }
-    dragStart = nil
-    windowStart = nil
-    didDragWindow = false
-    dragMode = .none
+    cancelActiveDrag()
   }
 
   override func rightMouseDown(with event: NSEvent) {
+    pressChanged?(false)
     showsSettingsMenu?(event)
   }
 
@@ -262,6 +289,7 @@ final class DiskCardView: NSView {
     else {
       return []
     }
+    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
     highlightsDrop?(true)
     return .copy
   }
@@ -280,23 +308,104 @@ final class DiskCardView: NSView {
         as? [URL],
       !urls.isEmpty
     else { return false }
-    return receivesFiles?(urls) ?? false
+    let accepted = receivesFiles?(urls) ?? false
+    if accepted {
+      NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
+    }
+    return accepted
   }
 }
 
 final class ContextForwardingButton: NSButton {
+  private var isHovered = false {
+    didSet { if isHovered != oldValue { needsDisplay = true } }
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    trackingAreas.forEach(removeTrackingArea)
+    addTrackingArea(
+      NSTrackingArea(
+        rect: .zero,
+        options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+        owner: self
+      ))
+  }
+
+  override func mouseEntered(with event: NSEvent) {
+    isHovered = true
+    superview?.mouseEntered(with: event)
+  }
+
+  override func mouseExited(with event: NSEvent) {
+    isHovered = false
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    if isEnabled && (isHovered || isHighlighted) {
+      let pillRect = bounds.insetBy(dx: 1, dy: 1)
+      let pill = NSBezierPath(ovalIn: pillRect)
+      let alpha: CGFloat = isHighlighted ? 0.16 : 0.09
+      NSColor.labelColor.withAlphaComponent(alpha).setFill()
+      pill.fill()
+    }
+    super.draw(dirtyRect)
+  }
+
   override func rightMouseDown(with event: NSEvent) {
     superview?.rightMouseDown(with: event)
   }
 }
 
 final class UsageRingView: NSView {
-  var fraction: CGFloat = 0 { didSet { needsDisplay = true } }
-  var centerText = "—" { didSet { needsDisplay = true } }
-  var textFontSize: CGFloat = 9 { didSet { needsDisplay = true } }
-  var accentColor: NSColor = .systemBlue { didSet { needsDisplay = true } }
+  var fraction: CGFloat = 0 {
+    didSet {
+      if abs(fraction - oldValue) > 0.0005 { needsDisplay = true }
+    }
+  }
+  var centerText = "—" {
+    didSet {
+      if centerText != oldValue { needsDisplay = true }
+    }
+  }
+  var textFontSize: CGFloat = 9 {
+    didSet {
+      if abs(textFontSize - oldValue) > 0.01 { needsDisplay = true }
+    }
+  }
+  var accentColor: NSColor = .systemBlue {
+    didSet {
+      if accentColor != oldValue { needsDisplay = true }
+    }
+  }
+  var isBusy: Bool = false {
+    didSet {
+      guard isBusy != oldValue else { return }
+      updateSpinTimer()
+      needsDisplay = true
+    }
+  }
+  private var spinPhase: CGFloat = 0
+  private var spinTimer: Timer?
   var hoverChanged: ((Bool) -> Void)?
   override var isOpaque: Bool { false }
+
+  deinit {
+    spinTimer?.invalidate()
+  }
+
+  private func updateSpinTimer() {
+    spinTimer?.invalidate()
+    spinTimer = nil
+    guard isBusy else { return }
+    let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+      guard let self else { return }
+      self.spinPhase = (self.spinPhase - 12).truncatingRemainder(dividingBy: 360)
+      self.needsDisplay = true
+    }
+    spinTimer = timer
+    RunLoop.main.add(timer, forMode: .common)
+  }
 
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
@@ -330,20 +439,41 @@ final class UsageRingView: NSView {
     NSColor.quaternaryLabelColor.setStroke()
     track.stroke()
 
-    let clamped = min(max(fraction, 0), 1)
-    if clamped > 0 {
-      let usage = NSBezierPath()
-      usage.lineWidth = lineWidth
-      usage.lineCapStyle = .round
-      usage.appendArc(
+    if isBusy {
+      let spinner = NSBezierPath()
+      spinner.lineWidth = lineWidth
+      spinner.lineCapStyle = .round
+      spinner.appendArc(
         withCenter: center,
         radius: radius,
-        startAngle: 90,
-        endAngle: 90 - 360 * clamped,
+        startAngle: 90 + spinPhase,
+        endAngle: 90 + spinPhase - 95,
         clockwise: true
       )
-      (clamped >= 0.9 ? NSColor.systemOrange : accentColor).setStroke()
-      usage.stroke()
+      accentColor.withAlphaComponent(0.85).setStroke()
+      spinner.stroke()
+    } else {
+      let clamped = min(max(fraction, 0), 1)
+      if clamped > 0 {
+        let usage = NSBezierPath()
+        usage.lineWidth = lineWidth
+        usage.lineCapStyle = .round
+        usage.appendArc(
+          withCenter: center,
+          radius: radius,
+          startAngle: 90,
+          endAngle: 90 - 360 * clamped,
+          clockwise: true
+        )
+        let ringColor: NSColor
+        if clamped >= 0.9 {
+          ringColor = .systemOrange
+        } else {
+          ringColor = accentColor
+        }
+        ringColor.setStroke()
+        usage.stroke()
+      }
     }
 
     let attributes: [NSAttributedString.Key: Any] = [
@@ -389,6 +519,7 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
   private var surface: DiskCardView!
 
   private var volumeURL: URL?
+  private var isReadOnlyVolume = false
   private var currentDisplayName: String = ""
   private var lastVolumeUUID: String?
   private var reconnectVolumeIdentifier: String?
@@ -396,14 +527,34 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
   private var state: PanelState = .disconnected
   private var disconnectedMessage = "未连接"
   private var operationGeneration = 0
+  private var hasOrderedOnDesktop = false
+  private var isVerifyingBackingDevice = false
+  private var currentEjectSymbol = ""
+  private var currentDiskSymbol = ""
+  private var statusOverrideUntil: Date?
+  private var maskCornerRadius: CGFloat = -1
+  private var maskSize: NSSize = .zero
 
   private var hoverDetails = ""
   private var hoverTimer: Timer?
-  private var hoverOffset = 0
-  private var hoverPauseTicks = 0
-  private var isDropTarget = false { didSet { updateAppearance() } }
-  private var isCardHovered = false { didSet { updateAppearance() } }
-  private var isReorderActive = false { didSet { updateAppearance() } }
+  private var isDropTarget = false {
+    didSet { if isDropTarget != oldValue { updateAppearance() } }
+  }
+  private var isCardHovered = false {
+    didSet { if isCardHovered != oldValue { updateAppearance() } }
+  }
+  private var isCardPressed = false {
+    didSet { if isCardPressed != oldValue { updateAppearance() } }
+  }
+  private var isReorderActive = false {
+    didSet { if isReorderActive != oldValue { updateAppearance() } }
+  }
+  private var isDesktopActive = true {
+    didSet { if isDesktopActive != oldValue { updateAppearance() } }
+  }
+  private var dimWhenDesktopInactive = false {
+    didSet { if dimWhenDesktopInactive != oldValue { updateAppearance() } }
+  }
   private var accentColor: NSColor = .systemBlue
 
   private let copyQueue = DispatchQueue(label: "DiskWidget.CopyQueue", qos: .utility)
@@ -438,6 +589,22 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
     hoverTimer?.invalidate()
   }
 
+  override var canBecomeKey: Bool { false }
+  override var canBecomeMain: Bool { false }
+
+  /// DesktopPlacement already manages multi-monitor clamping across all connected
+  /// screens. Prevent AppKit from constraining secondary-display coordinates back
+  /// to `NSScreen.main` or shifting cards below the menu bar of another screen.
+  override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+    frameRect
+  }
+
+  override func orderOut(_ sender: Any?) {
+    hasOrderedOnDesktop = false
+    surface?.cancelActiveDrag()
+    super.orderOut(sender)
+  }
+
   init(
     diskName: String,
     initialVolumeUUID: String? = nil,
@@ -464,10 +631,9 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
     backgroundColor = .clear
     hasShadow = true
     level = Self.desktopWidgetLevel
-    // Keep each card in the Space where it was created, like a native
-    // desktop widget. Do not use `.canJoinAllSpaces`: that makes the cards
-    // remain visible while the user swipes to another desktop.
-    collectionBehavior = [.stationary, .ignoresCycle]
+    // Let the window server hide cards during Mission Control and restore
+    // them afterward. `.stationary` explicitly keeps them visible there.
+    collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
     hidesOnDeactivate = false
     ignoresMouseEvents = false
     acceptsMouseMovedEvents = true
@@ -476,11 +642,16 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
     becomesKeyOnlyIfNeeded = true
 
     let card = DiskCardView(frame: contentView?.bounds ?? .zero)
-    card.acceptsFiles = { [weak self] in self?.state == .connected && self?.volumeURL != nil }
+    card.acceptsFiles = { [weak self] in
+      guard let self else { return false }
+      return self.state == .connected && self.volumeURL != nil && !self.isReadOnlyVolume
+    }
     card.receivesFiles = { [weak self] urls in self?.copyDroppedFiles(urls) ?? false }
     card.highlightsDrop = { [weak self] highlighted in self?.isDropTarget = highlighted }
     card.opensDisk = { [weak self] in self?.openDisk() }
     card.hoverChanged = { [weak self] hovering in self?.isCardHovered = hovering }
+    card.pressChanged = { [weak self] pressed in self?.isCardPressed = pressed }
+    card.appearanceChanged = { [weak self] in self?.updateAppearance() }
     card.showsSettingsMenu = { [weak self] event in self?.showSettingsMenu(for: event) }
     card.groupDragBegan = { [weak self] in
       guard let self else { return }
@@ -512,15 +683,17 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
     surface.autoresizingMask = [.width, .height]
     surface.wantsLayer = true
     surface.layer?.cornerRadius = layout.cornerRadius
+    surface.layer?.cornerCurve = .continuous
     surface.layer?.masksToBounds = true
     contentView = surface
 
-    materialView.material = .underPageBackground
+    materialView.material = .popover
     materialView.blendingMode = .behindWindow
     materialView.state = .active
     materialView.translatesAutoresizingMaskIntoConstraints = false
     materialView.wantsLayer = true
     materialView.layer?.cornerRadius = layout.cornerRadius
+    materialView.layer?.cornerCurve = .continuous
     materialView.layer?.masksToBounds = true
     surface.addSubview(materialView)
     NSLayoutConstraint.activate([
@@ -530,8 +703,7 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
       materialView.bottomAnchor.constraint(equalTo: surface.bottomAnchor),
     ])
 
-    diskIcon.image = NSImage(
-      systemSymbolName: "externaldrive.fill", accessibilityDescription: "外置硬盘")
+    setDiskIconSymbol(isDiskImage ? "opticaldiscdrive.fill" : "externaldrive.fill")
     diskIcon.contentTintColor = .secondaryLabelColor
     diskIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .regular)
     diskIcon.imageScaling = .scaleProportionallyUpOrDown
@@ -634,13 +806,29 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
     NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
   }
 
+  /// Places the panel onto the desktop once when first added. Subsequent calls
+  /// only verify the window level and never call `orderFrontRegardless()`, so
+  /// WindowServer remains in full control of hiding/restoring the panel during
+  /// Mission Control and Space transitions.
   func reassertDesktopLevel() {
-    level = Self.desktopWidgetLevel
+    if level != Self.desktopWidgetLevel { level = Self.desktopWidgetLevel }
+    guard !hasOrderedOnDesktop else { return }
+    hasOrderedOnDesktop = true
     orderFrontRegardless()
   }
 
+  func ensureDesktopLevelWithoutOrdering() {
+    if level != Self.desktopWidgetLevel { level = Self.desktopWidgetLevel }
+  }
+
+  func setDesktopActive(_ active: Bool) {
+    isDesktopActive = active
+  }
+
   func representsVolume(name: String, uuid: String?) -> Bool {
-    if let uuid, let lastVolumeUUID, uuid == lastVolumeUUID { return true }
+    if let uuid, !uuid.isEmpty, let lastVolumeUUID, !lastVolumeUUID.isEmpty {
+      return uuid == lastVolumeUUID
+    }
     return name == currentDisplayName || name == diskName
   }
 
@@ -654,7 +842,9 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
   }
 
   func setDiskImageClassification(_ value: Bool) {
+    guard isDiskImage != value else { return }
     isDiskImage = value
+    updateDiskIconForCurrentVolume()
   }
 
   func setReorderActive(_ active: Bool) {
@@ -695,10 +885,15 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
       return
     }
 
+    guard !isVerifyingBackingDevice else { return }
+    isVerifyingBackingDevice = true
+
     DispatchQueue.global(qos: .utility).async {
       let exists = (try? Self.runDiskutil(["info", "-plist", identifier], timeout: 5)) != nil
       DispatchQueue.main.async { [weak self] in
-        guard let self, self.state == .unmounted else { return }
+        guard let self else { return }
+        self.isVerifyingBackingDevice = false
+        guard self.state == .unmounted else { return }
         completion(exists)
       }
     }
@@ -706,14 +901,43 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
 
   func setBackgroundOpacity(_ opacity: CGFloat) {
     let clamped = max(0, min(opacity, 1))
-    materialView.alphaValue = clamped
-    materialView.isHidden = clamped <= 0.001
+    if abs(materialView.alphaValue - clamped) > 0.001 {
+      materialView.alphaValue = clamped
+    }
+    let shouldHide = clamped <= 0.001
+    if materialView.isHidden != shouldHide {
+      materialView.isHidden = shouldHide
+    }
+  }
+
+  /// Updates the rounded mask image on `NSVisualEffectView` so behind-window
+  /// blur and window shadow follow the exact continuous corner radius without
+  /// rectangular corner bleeding.
+  private func updateMaterialMaskIfNeeded(size: NSSize, cornerRadius: CGFloat) {
+    guard size.width > 0, size.height > 0 else { return }
+    guard size != maskSize || abs(cornerRadius - maskCornerRadius) > 0.1 else { return }
+    maskSize = size
+    maskCornerRadius = cornerRadius
+
+    let image = NSImage(size: size, flipped: false) { rect in
+      NSColor.black.setFill()
+      NSBezierPath(
+        roundedRect: rect,
+        xRadius: cornerRadius,
+        yRadius: cornerRadius
+      ).fill()
+      return true
+    }
+    materialView.maskImage = image
+    if isVisible {
+      invalidateShadow()
+    }
   }
 
   func applyLayout(_ newLayout: WidgetLayout) {
     let layout = newLayout.normalized()
-    enforceManagedSize(NSSize(width: layout.width, height: layout.height))
     setBackgroundOpacity(layout.opacity)
+    dimWhenDesktopInactive = layout.dimWhenDesktopInactive
     accentColor = layout.accentColor
     usageRing.accentColor = accentColor
     usageRing.textFontSize = layout.ringTextFontSize
@@ -735,14 +959,16 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
     ejectHeightConstraint.constant = layout.ejectSize
     nameLabel.font = .systemFont(ofSize: layout.nameFontSize, weight: .semibold)
     statusLabel.font = .systemFont(ofSize: layout.statusFontSize, weight: .medium)
-    if state == .connected { diskIcon.contentTintColor = accentColor }
     surface.layer?.cornerRadius = layout.cornerRadius
+    surface.layer?.cornerCurve = .continuous
     materialView.layer?.cornerRadius = layout.cornerRadius
+    materialView.layer?.cornerCurve = .continuous
+    let targetSize = NSSize(width: layout.width, height: layout.height)
+    enforceManagedSize(targetSize)
+    updateMaterialMaskIfNeeded(size: targetSize, cornerRadius: layout.cornerRadius)
     surface.needsLayout = true
     surface.layoutSubtreeIfNeeded()
-    // Auto Layout has now seen the current text/fonts; reassert the exact global
-    // window size after that pass so no intrinsic-content fitting can escape it.
-    enforceManagedSize(NSSize(width: layout.width, height: layout.height))
+    updateAppearance()
   }
 
   /// Hard-lock the NSPanel itself to the globally managed card size.
@@ -758,41 +984,105 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
       width: max(1, size.width.rounded()),
       height: max(1, size.height.rounded())
     )
-
-    // Preserve the top-left anchor while changing the globally managed size.
     let topLeft = NSPoint(x: frame.minX, y: frame.maxY)
-
-    // Temporarily release the previous exact-size lock so a global width/height
-    // change can move from (for example) 236 pt to 300 pt in either direction.
-    let generousMax = NSSize(width: 10_000, height: 10_000)
-    minSize = NSSize(width: 1, height: 1)
-    maxSize = generousMax
-    contentMinSize = NSSize(width: 1, height: 1)
-    contentMaxSize = generousMax
-
     let targetFrame = NSRect(
       x: topLeft.x,
       y: topLeft.y - target.height,
       width: target.width,
       height: target.height
     )
-    setFrame(targetFrame, display: true)
-    setContentSize(target)
+    setManagedFrame(targetFrame)
+  }
 
-    // Exact lock: neither label fitting nor any subsequent AppKit layout pass can
-    // give one disk a different width from the rest of the group.
-    minSize = target
-    maxSize = target
-    contentMinSize = target
-    contentMaxSize = target
+  /// Atomically sets both the window frame and exact min/max size locks in a
+  /// single pass, avoiding intermediate redraws at stale coordinates.
+  func setManagedFrame(_ targetFrame: NSRect, animated: Bool = false) {
+    let targetSize = NSSize(
+      width: max(1, targetFrame.width.rounded()),
+      height: max(1, targetFrame.height.rounded())
+    )
+    let normalizedFrame = NSRect(
+      x: targetFrame.origin.x,
+      y: targetFrame.origin.y,
+      width: targetSize.width,
+      height: targetSize.height
+    )
 
-    // Keep the root view explicitly synchronized as an additional guard for this
-    // borderless nonactivating panel.
-    if let contentView {
-      contentView.frame = NSRect(origin: .zero, size: target)
+    let sizeChanged = frame.size != targetSize
+    let locksNeedUpdate =
+      minSize != targetSize || maxSize != targetSize
+      || contentMinSize != targetSize || contentMaxSize != targetSize
+
+    if sizeChanged || locksNeedUpdate {
+      let generousMax = NSSize(width: 10_000, height: 10_000)
+      minSize = NSSize(width: 1, height: 1)
+      maxSize = generousMax
+      contentMinSize = NSSize(width: 1, height: 1)
+      contentMaxSize = generousMax
+    }
+
+    if frame != normalizedFrame {
+      if animated && isVisible && !sizeChanged {
+        NSAnimationContext.runAnimationGroup { context in
+          context.duration = 0.16
+          context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+          self.animator().setFrame(normalizedFrame, display: true)
+        }
+      } else {
+        setFrame(normalizedFrame, display: isVisible)
+      }
+    }
+
+    if sizeChanged || locksNeedUpdate {
+      minSize = targetSize
+      maxSize = targetSize
+      contentMinSize = targetSize
+      contentMaxSize = targetSize
+    }
+
+    if let contentView, contentView.frame.size != targetSize {
+      contentView.frame = NSRect(origin: .zero, size: targetSize)
       contentView.needsLayout = true
       contentView.layoutSubtreeIfNeeded()
     }
+    if sizeChanged, maskCornerRadius > 0 {
+      updateMaterialMaskIfNeeded(size: targetSize, cornerRadius: maskCornerRadius)
+    }
+  }
+
+  private func setEjectButtonSymbol(_ symbol: String, accessibilityDescription: String) {
+    guard currentEjectSymbol != symbol else { return }
+    currentEjectSymbol = symbol
+    ejectButton.image = NSImage(
+      systemSymbolName: symbol, accessibilityDescription: accessibilityDescription)
+  }
+
+  private func setDiskIconSymbol(_ symbol: String) {
+    guard currentDiskSymbol != symbol else { return }
+    currentDiskSymbol = symbol
+    if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: "外置硬盘")
+      ?? NSImage(systemSymbolName: "externaldrive.fill", accessibilityDescription: "外置硬盘")
+    {
+      diskIcon.image = img
+    }
+  }
+
+  private func updateDiskIconForCurrentVolume() {
+    if isDiskImage {
+      setDiskIconSymbol("opticaldiscdrive.fill")
+      return
+    }
+    if let url = volumeURL {
+      let tmManifest = url.appendingPathComponent("backup_manifest.plist")
+      let tmFolder = url.appendingPathComponent("Backups.backupdb")
+      if FileManager.default.fileExists(atPath: tmManifest.path)
+        || FileManager.default.fileExists(atPath: tmFolder.path)
+      {
+        setDiskIconSymbol("externaldrive.badge.timemachine")
+        return
+      }
+    }
+    setDiskIconSymbol("externaldrive.fill")
   }
 
   private func showSettingsMenu(for event: NSEvent) {
@@ -872,6 +1162,9 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
     }
 
     NSMenu.popUpContextMenu(menu, with: event, for: surface)
+    let mouseInWindow = convertPoint(fromScreen: NSEvent.mouseLocation)
+    let mouseInSurface = surface.convert(mouseInWindow, from: nil)
+    isCardHovered = surface.bounds.contains(mouseInSurface)
   }
 
   @objc private func requestOpenDisk() { openDisk() }
@@ -895,6 +1188,7 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
       .volumeUUIDStringKey,
       .volumeAvailableCapacityKey,
       .volumeTotalCapacityKey,
+      .volumeIsReadOnlyKey,
     ]
     let volumes =
       mountedVolumes
@@ -905,16 +1199,23 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
 
     var match: (URL, URLResourceValues)?
     var fallback: (URL, URLResourceValues)?
+    let hasKnownUUID = (lastVolumeUUID?.isEmpty == false)
 
     for url in volumes {
       guard let values = try? url.resourceValues(forKeys: keys) else { continue }
+      let candidateUUID = values.volumeUUIDString
       if let uuid = lastVolumeUUID,
-        values.volumeUUIDString == uuid
+        !uuid.isEmpty,
+        candidateUUID == uuid
       {
         match = (url, values)
         break
       }
-      if values.volumeName == currentDisplayName || values.volumeName == diskName, fallback == nil {
+      let candidateHasUUID = (candidateUUID?.isEmpty == false)
+      if (!hasKnownUUID || !candidateHasUUID),
+        values.volumeName == currentDisplayName || values.volumeName == diskName,
+        fallback == nil
+      {
         fallback = (url, values)
       }
     }
@@ -923,6 +1224,7 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
 
     guard let (url, values) = match else {
       volumeURL = nil
+      isReadOnlyVolume = false
       if state == .unmounted {
         showUnmountedState()
       } else {
@@ -934,12 +1236,17 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
     }
 
     volumeURL = url
+    isReadOnlyVolume = (values.volumeIsReadOnly == true)
     state = .connected
+    usageRing.isBusy = false
     disconnectedMessage = "未连接"
     currentDisplayName = values.volumeName ?? diskName
-    nameLabel.stringValue = currentDisplayName
+    if nameLabel.stringValue != currentDisplayName {
+      nameLabel.stringValue = currentDisplayName
+    }
+    updateDiskIconForCurrentVolume()
 
-    if let uuid = values.volumeUUIDString {
+    if let uuid = values.volumeUUIDString, !uuid.isEmpty, uuid != lastVolumeUUID {
       lastVolumeUUID = uuid
       UserDefaults.standard.set(uuid, forKey: "disk-widget-volume-uuid-\(diskName)")
     }
@@ -954,35 +1261,55 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
       usageRing.centerText = "\(Int((fraction * 100).rounded()))%"
       let compactAvailable = Self.size(available).replacingOccurrences(of: " ", with: "")
       let compactTotal = Self.size(total).replacingOccurrences(of: " ", with: "")
-      hoverDetails = "\(compactAvailable) 可用 · 共 \(compactTotal)"
-      statusLabel.stringValue = hoverDetails
-      usageRing.toolTip =
-        "已用 \(Self.size(used)) · 可用 \(Self.size(available)) · 总容量 \(Self.size(total))"
+      hoverDetails =
+        isReadOnlyVolume
+        ? "只读 · 共 \(compactTotal)"
+        : "\(compactAvailable) 可用 · 共 \(compactTotal)"
+      let readOnlySuffix = isReadOnlyVolume ? " · 只读卷" : ""
+      let newToolTip =
+        "已用 \(Self.size(used)) · 可用 \(Self.size(available)) · 总容量 \(Self.size(total))\(readOnlySuffix)"
+      if usageRing.toolTip != newToolTip {
+        usageRing.toolTip = newToolTip
+      }
     } else {
       usageRing.fraction = 0
       usageRing.centerText = "—"
-      hoverDetails = "容量信息不可用"
-      statusLabel.stringValue = hoverDetails
-      usageRing.toolTip = hoverDetails
+      hoverDetails = isReadOnlyVolume ? "只读卷" : "容量信息不可用"
+      if usageRing.toolTip != hoverDetails {
+        usageRing.toolTip = hoverDetails
+      }
     }
-    diskIcon.contentTintColor = accentColor
-    ejectButton.image = NSImage(systemSymbolName: "eject.fill", accessibilityDescription: "安全推出")
-    ejectButton.toolTip = "安全推出 \(currentDisplayName)（可重新连接）"
-    ejectButton.isEnabled = true
-    ejectButton.isHidden = false
+
+    let hasActiveStatusOverride =
+      statusOverrideUntil.map { Date() < $0 } ?? false
+    if !isReorderActive && !hasActiveStatusOverride && statusLabel.stringValue != hoverDetails {
+      statusLabel.stringValue = hoverDetails
+    }
+
+    setEjectButtonSymbol("eject.fill", accessibilityDescription: "安全推出")
+    let ejectTip = "安全推出 \(currentDisplayName)（可重新连接）"
+    if ejectButton.toolTip != ejectTip {
+      ejectButton.toolTip = ejectTip
+    }
+    if !ejectButton.isEnabled { ejectButton.isEnabled = true }
+    if ejectButton.isHidden { ejectButton.isHidden = false }
     updateAppearance()
   }
 
   private func showUnmountedState() {
     volumeURL = nil
+    isReadOnlyVolume = false
+    statusOverrideUntil = nil
+    usageRing.isBusy = false
     usageRing.fraction = 0
     usageRing.centerText = "—"
     hoverDetails = "硬盘已安全卸载"
     usageRing.toolTip = "已安全卸载，可重新连接"
-    statusLabel.stringValue = "已安全推出 · 可重连"
+    if !isReorderActive {
+      statusLabel.stringValue = "已安全推出 · 可重连"
+    }
     diskIcon.contentTintColor = .secondaryLabelColor
-    ejectButton.image = NSImage(
-      systemSymbolName: "arrow.clockwise.circle.fill", accessibilityDescription: "重新连接")
+    setEjectButtonSymbol("arrow.clockwise.circle.fill", accessibilityDescription: "重新连接")
     ejectButton.toolTip = "重新连接 \(currentDisplayName.isEmpty ? diskName : currentDisplayName)"
     ejectButton.isEnabled = true
     ejectButton.isHidden = false
@@ -990,14 +1317,18 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
 
   private func showDisconnectedState(message: String) {
     volumeURL = nil
+    isReadOnlyVolume = false
+    statusOverrideUntil = nil
+    usageRing.isBusy = false
     usageRing.fraction = 0
     usageRing.centerText = "—"
     hoverDetails = message
     usageRing.toolTip = message
-    statusLabel.stringValue = message
+    if !isReorderActive {
+      statusLabel.stringValue = message
+    }
     diskIcon.contentTintColor = .tertiaryLabelColor
-    ejectButton.image = NSImage(
-      systemSymbolName: "xmark.circle.fill", accessibilityDescription: "移除卡片")
+    setEjectButtonSymbol("xmark.circle.fill", accessibilityDescription: "移除卡片")
     ejectButton.toolTip = "移除 \(diskName) 卡片"
     ejectButton.isEnabled = true
     ejectButton.isHidden = false
@@ -1005,13 +1336,15 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
 
   private func showBusyState(_ message: String, symbol: String) {
     volumeURL = nil
+    statusOverrideUntil = nil
+    usageRing.isBusy = true
     usageRing.fraction = 0
     usageRing.centerText = "…"
     hoverDetails = message
     usageRing.toolTip = message
     statusLabel.stringValue = message
     diskIcon.contentTintColor = .secondaryLabelColor
-    ejectButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: message)
+    setEjectButtonSymbol(symbol, accessibilityDescription: message)
     ejectButton.toolTip = message
     ejectButton.isEnabled = false
     ejectButton.isHidden = false
@@ -1026,10 +1359,12 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
   }
 
   private func copyDroppedFiles(_ urls: [URL]) -> Bool {
-    guard state == .connected, let destinationRoot = volumeURL, !urls.isEmpty else {
+    guard state == .connected, !isReadOnlyVolume, let destinationRoot = volumeURL, !urls.isEmpty
+    else {
       return false
     }
 
+    statusOverrideUntil = Date().addingTimeInterval(60)
     statusLabel.stringValue = "正在复制 \(urls.count) 项…"
     let displayName = currentDisplayName
 
@@ -1051,10 +1386,15 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
         guard let self else { return }
         self.isDropTarget = false
         if self.state == .connected {
+          self.statusOverrideUntil = Date().addingTimeInterval(2.4)
           self.statusLabel.stringValue = copied > 0 ? "已复制 \(copied) 项" : "复制失败"
           DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            self?.refresh()
+            guard let self else { return }
+            self.statusOverrideUntil = nil
+            self.refresh()
           }
+        } else {
+          self.statusOverrideUntil = nil
         }
       }
     }
@@ -1220,6 +1560,7 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
           self.state = .disconnected
           self.refresh()
           if self.state == .connected {
+            self.statusOverrideUntil = Date().addingTimeInterval(2.5)
             self.statusLabel.stringValue = "推出失败"
           } else {
             self.disconnectedMessage = "推出失败"
@@ -1325,6 +1666,7 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
           self.state = .disconnected
           self.refresh()
           if self.state == .connected {
+            self.statusOverrideUntil = Date().addingTimeInterval(2.5)
             self.statusLabel.stringValue = "完全推出失败"
           } else {
             self.disconnectedMessage = "完全推出失败"
@@ -1404,7 +1746,9 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
   }
 
   func setManagedPosition(_ origin: NSPoint) {
-    setFrameOrigin(origin)
+    if frame.origin != origin {
+      setFrameOrigin(origin)
+    }
   }
 
   private static func uniqueDestination(for source: URL, in directory: URL) -> URL {
@@ -1422,35 +1766,69 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
 
   private func updateAppearance() {
     guard surface != nil else { return }
-    let borderColor: NSColor
-    let borderWidth: CGFloat
-    let fillColor: NSColor
 
-    if isDropTarget {
-      borderColor = accentColor
-      borderWidth = 2
-      fillColor = accentColor.withAlphaComponent(0.10)
-    } else if isReorderActive {
-      borderColor = accentColor
-      borderWidth = 2
-      fillColor = accentColor.withAlphaComponent(0.07)
-    } else if isCardHovered {
-      borderColor = NSColor.separatorColor.withAlphaComponent(0.55)
-      borderWidth = 1
-      fillColor = NSColor.labelColor.withAlphaComponent(0.035)
-    } else {
-      borderColor = NSColor.separatorColor.withAlphaComponent(materialView.isHidden ? 0 : 0.28)
-      borderWidth = materialView.isHidden ? 0 : 0.5
-      fillColor = .clear
+    let isDark =
+      surface.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    let shouldDimIdle =
+      dimWhenDesktopInactive && !isDesktopActive && !isCardHovered && !isDropTarget
+      && !isReorderActive
+
+    let effectiveAccent: NSColor = shouldDimIdle ? .secondaryLabelColor : accentColor
+    if state == .connected && diskIcon.contentTintColor != effectiveAccent {
+      diskIcon.contentTintColor = effectiveAccent
+    }
+    usageRing.accentColor = effectiveAccent
+
+    surface.effectiveAppearance.performAsCurrentDrawingAppearance {
+      let borderColor: NSColor
+      let borderWidth: CGFloat
+      let fillColor: NSColor
+
+      if isDropTarget {
+        borderColor = accentColor
+        borderWidth = 2
+        fillColor = accentColor.withAlphaComponent(0.12)
+      } else if isReorderActive {
+        borderColor = accentColor
+        borderWidth = 2
+        fillColor = accentColor.withAlphaComponent(0.08)
+      } else if isCardPressed {
+        let rimAlpha: CGFloat = isDark ? 0.24 : 0.16
+        borderColor = (isDark ? NSColor.white : NSColor.black).withAlphaComponent(rimAlpha)
+        borderWidth = 1
+        fillColor = NSColor.labelColor.withAlphaComponent(0.06)
+      } else if isCardHovered {
+        let rimAlpha: CGFloat = isDark ? 0.22 : 0.14
+        borderColor = (isDark ? NSColor.white : NSColor.black).withAlphaComponent(rimAlpha)
+        borderWidth = 1
+        fillColor = NSColor.labelColor.withAlphaComponent(0.03)
+      } else {
+        let baseAlpha: CGFloat = isDark ? 0.13 : 0.08
+        borderColor =
+          (isDark ? NSColor.white : NSColor.black).withAlphaComponent(
+            materialView.isHidden ? 0 : baseAlpha)
+        borderWidth = materialView.isHidden ? 0 : 0.75
+        fillColor = .clear
+      }
+
+      surface.layer?.borderColor = borderColor.cgColor
+      surface.layer?.borderWidth = borderWidth
+      surface.layer?.backgroundColor = fillColor.cgColor
     }
 
-    surface.layer?.borderColor = borderColor.cgColor
-    surface.layer?.borderWidth = borderWidth
-    surface.layer?.backgroundColor = fillColor.cgColor
+    let targetCardAlpha: CGFloat = shouldDimIdle ? 0.78 : 1.0
+    if abs(alphaValue - targetCardAlpha) > 0.01 {
+      alphaValue = targetCardAlpha
+    }
+
+    let targetAlpha: CGFloat
     if state == .connected || state == .unmounted {
-      ejectButton.alphaValue = isCardHovered ? 1.0 : 0.68
+      targetAlpha = isCardHovered ? 1.0 : 0.68
     } else {
-      ejectButton.alphaValue = 0.85
+      targetAlpha = 0.85
+    }
+    if abs(ejectButton.alphaValue - targetAlpha) > 0.001 {
+      ejectButton.alphaValue = targetAlpha
     }
   }
 
@@ -1853,7 +2231,7 @@ final class LayoutEditorWindowController: NSWindowController {
     self.layout = layout.normalized()
     self.onChange = onChange
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 438, height: 758),
+      contentRect: NSRect(x: 0, y: 0, width: 438, height: 792),
       styleMask: [.titled, .closable],
       backing: .buffered,
       defer: false
@@ -1951,6 +2329,15 @@ final class LayoutEditorWindowController: NSWindowController {
     installerMode.selectedSegment = layout.showDiskImagesInWidget ? 0 : 1
     installerMode.toolTip = "DMG/ISO 等安装镜像。Finder 桌面模式不会修改 Finder 自身的桌面显示偏好。"
     stack.addArrangedSubview(SimpleSettingRow(title: "安装镜像", control: installerMode))
+
+    let dimToggle = NSButton(
+      checkboxWithTitle: "使用其他应用时自动柔和淡化",
+      target: self,
+      action: #selector(desktopDimmingChanged(_:))
+    )
+    dimToggle.state = layout.dimWhenDesktopInactive ? .on : .off
+    dimToggle.toolTip = "类似 macOS 原生桌面小组件：专注使用其他窗口时柔和降噪，鼠标悬停或回到桌面时恢复鲜艳。"
+    stack.addArrangedSubview(SimpleSettingRow(title: "桌面融合", control: dimToggle))
 
     let menuBarToggle = NSButton(
       checkboxWithTitle: "显示",
@@ -2105,6 +2492,11 @@ final class LayoutEditorWindowController: NSWindowController {
     commitLayout()
   }
 
+  @objc private func desktopDimmingChanged(_ sender: NSButton) {
+    layout.dimWhenDesktopInactive = sender.state == .on
+    commitLayout()
+  }
+
   @objc private func menuBarVisibilityChanged(_ sender: NSButton) {
     layout.showMenuBarItem = sender.state == .on
     commitLayout()
@@ -2141,7 +2533,9 @@ final class LayoutEditorWindowController: NSWindowController {
   }
 
   func present() {
-    window?.center()
+    if window?.isVisible != true {
+      window?.center()
+    }
     showWindow(nil)
     NSApp.activate(ignoringOtherApps: true)
     window?.makeKeyAndOrderFront(nil)
@@ -2150,6 +2544,48 @@ final class LayoutEditorWindowController: NSWindowController {
 
 // MARK: - App lifecycle
 
+enum DesktopPlacement {
+  /// Select the display containing the card, not the display of the key window.
+  /// Screen coordinates may be negative or above the primary display.
+  static func clampedAnchor(
+    _ anchor: NSPoint, cardSize: NSSize, visibleFrames: [NSRect]
+  ) -> NSPoint {
+    guard !visibleFrames.isEmpty else { return anchor }
+    let safeAnchor: NSPoint
+    if anchor.x.isFinite && anchor.y.isFinite {
+      safeAnchor = anchor
+    } else {
+      let first = visibleFrames[0]
+      safeAnchor = NSPoint(x: first.maxX - cardSize.width - 28, y: first.maxY - 28)
+    }
+    let card = NSRect(
+      x: safeAnchor.x, y: safeAnchor.y - cardSize.height,
+      width: cardSize.width, height: cardSize.height)
+    let center = NSPoint(x: card.midX, y: card.midY)
+    func overlap(_ frame: NSRect) -> CGFloat {
+      let intersection = frame.intersection(card)
+      return intersection.isNull ? 0 : intersection.width * intersection.height
+    }
+    func distance(_ frame: NSRect) -> CGFloat {
+      let dx = max(frame.minX - center.x, 0, center.x - frame.maxX)
+      let dy = max(frame.minY - center.y, 0, center.y - frame.maxY)
+      return dx * dx + dy * dy
+    }
+    let visible = visibleFrames.sorted {
+      let a = overlap($0), b = overlap($1)
+      return a == b ? distance($0) < distance($1) : a > b
+    }[0]
+    let margin: CGFloat = 12
+    let minX = visible.minX + margin
+    let maxX = max(minX, visible.maxX - cardSize.width - margin)
+    let minTopY = visible.minY + cardSize.height + margin
+    let maxTopY = max(minTopY, visible.maxY - margin)
+    return NSPoint(
+      x: min(max(safeAnchor.x, minX), maxX),
+      y: min(max(safeAnchor.y, minTopY), maxTopY))
+  }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var panels: [DiskPanel] = []
   private var timer: Timer?
@@ -2157,18 +2593,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var layoutEditor: LayoutEditorWindowController?
   private var statusItem: NSStatusItem?
   private var groupDragStartOrigins: [ObjectIdentifier: NSPoint] = [:]
+  private var screenLayoutWorkItem: DispatchWorkItem?
+  private var pendingRefreshAfterInteraction = false
+  private var isDesktopActive = true
 
   private weak var reorderSource: DiskPanel?
   private var reorderBasePanels: [DiskPanel] = []
   private var reorderAnchor: NSPoint?
 
   private var diskImageMountPaths: Set<String> = []
+  private var lastKnownVolumePaths: Set<String> = []
   private var diskImageScanInFlight = false
   private var hasLoadedDiskImageMountPaths = false
   private var lastDiskImageScan = Date.distantPast
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
+    updateDesktopActiveState()
     updateStatusItemVisibility()
     scheduleDiskImageMountRefresh(force: true)
     refresh()
@@ -2206,6 +2647,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       self,
       selector: #selector(activeSpaceChanged(_:)),
       name: NSWorkspace.activeSpaceDidChangeNotification,
+      object: nil
+    )
+    workspaceNotifications.addObserver(
+      self,
+      selector: #selector(activeAppChanged(_:)),
+      name: NSWorkspace.didActivateApplicationNotification,
       object: nil
     )
     NotificationCenter.default.addObserver(
@@ -2275,6 +2722,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationWillTerminate(_ notification: Notification) {
     timer?.invalidate()
+    screenLayoutWorkItem?.cancel()
     NSWorkspace.shared.notificationCenter.removeObserver(self)
     NotificationCenter.default.removeObserver(self)
   }
@@ -2282,21 +2730,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   @objc private func volumeChanged(_ notification: Notification) {
     scheduleDiskImageMountRefresh(force: true)
     refresh()
+    if notification.name == NSWorkspace.didWakeNotification {
+      scheduleScreenParametersRelayout()
+    }
   }
 
   @objc private func activeSpaceChanged(_ notification: Notification) {
-    panels.forEach { $0.reassertDesktopLevel() }
-    refresh()
+    // The window server owns Space and Mission Control visibility. Never force
+    // panels to order front or trigger layout/process scans during a Space transition.
+    panels.forEach { $0.ensureDesktopLevelWithoutOrdering() }
+  }
+
+  @objc private func activeAppChanged(_ notification: Notification) {
+    updateDesktopActiveState()
+  }
+
+  private func updateDesktopActiveState() {
+    let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    let active = (frontBundle == "com.apple.finder" || frontBundle == Bundle.main.bundleIdentifier)
+    isDesktopActive = active
+    panels.forEach { $0.setDesktopActive(active) }
   }
 
   @objc private func screenParametersChanged(_ notification: Notification) {
-    let anchor = currentGroupAnchor() ?? savedGroupAnchor() ?? defaultGroupAnchor()
-    relayoutPanels(anchor: anchor)
+    scheduleScreenParametersRelayout()
+  }
+
+  private func scheduleScreenParametersRelayout() {
+    // Wake, Dock and display changes can arrive in a burst with intermediate
+    // geometry. Restore from the user's position after that geometry settles.
+    screenLayoutWorkItem?.cancel()
+    let work = DispatchWorkItem { [weak self] in
+      guard let self, self.groupDragStartOrigins.isEmpty, self.reorderSource == nil else { return }
+      self.relayoutPanels(anchor: self.preferredGroupAnchor())
+    }
+    screenLayoutWorkItem = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
   }
 
   @objc private func refresh() {
-    scheduleDiskImageMountRefresh()
-    if !layout.showDiskImagesInWidget && !hasLoadedDiskImageMountPaths { return }
+    guard groupDragStartOrigins.isEmpty, reorderSource == nil else {
+      pendingRefreshAfterInteraction = true
+      return
+    }
+    pendingRefreshAfterInteraction = false
 
     let keys: Set<URLResourceKey> = [
       .volumeNameKey,
@@ -2305,11 +2782,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       .volumeIsInternalKey,
       .volumeAvailableCapacityKey,
       .volumeTotalCapacityKey,
+      .volumeIsReadOnlyKey,
     ]
     let volumes =
       FileManager.default.mountedVolumeURLs(
         includingResourceValuesForKeys: Array(keys), options: []
       ) ?? []
+
+    let currentVolumePaths = Set(volumes.map { $0.standardizedFileURL.path })
+    let volumePathsChanged = currentVolumePaths != lastKnownVolumePaths
+    lastKnownVolumePaths = currentVolumePaths
+    if !hasLoadedDiskImageMountPaths || volumePathsChanged {
+      scheduleDiskImageMountRefresh(force: volumePathsChanged || !hasLoadedDiskImageMountPaths)
+    }
+
+    if !layout.showDiskImagesInWidget && !hasLoadedDiskImageMountPaths { return }
 
     var externalVolumes: [(url: URL, name: String, uuid: String?, isDiskImage: Bool)] = []
     for url in volumes {
@@ -2334,12 +2821,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
 
+    // Capture before any mutations: a newly discovered drive or removed first
+    // card must not alter the group's intended anchor.
+    let discoveryAnchor = preferredGroupAnchor()
+    var needsRelayout = false
+
     if !layout.showDiskImagesInWidget {
       let hidden = panels.filter { $0.isDiskImage }
-      if !hidden.isEmpty { removePanelsFromDesktop(hidden) }
+      if !hidden.isEmpty {
+        detachPanels(hidden)
+        needsRelayout = true
+      }
     }
 
-    let hadPanelsBeforeDiscovery = !panels.isEmpty
+    panels.forEach { $0.refresh(using: volumes) }
+
+    let unavailablePanels = panels.filter { $0.shouldAutoRemoveWhenUnavailable }
+    if !unavailablePanels.isEmpty {
+      detachPanels(unavailablePanels)
+      needsRelayout = true
+    }
+
     var addedPanel = false
     for volume in externalVolumes {
       let alreadyRepresented = panels.contains {
@@ -2354,24 +2856,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         initialLayout: layout
       )
       configurePanel(panel)
+      panel.setDesktopActive(isDesktopActive)
       panel.applyLayout(layout)
+      panel.refresh(using: volumes)
       panels.append(panel)
       addedPanel = true
+      needsRelayout = true
     }
 
     if addedPanel {
       applySavedPanelOrder()
-      let anchor =
-        hadPanelsBeforeDiscovery
-        ? (currentGroupAnchor() ?? savedGroupAnchor() ?? defaultGroupAnchor())
-        : (savedGroupAnchor() ?? defaultGroupAnchor())
-      relayoutPanels(anchor: anchor)
     }
-
-    panels.forEach { $0.refresh(using: volumes) }
-
-    let unavailablePanels = panels.filter { $0.shouldAutoRemoveWhenUnavailable }
-    if !unavailablePanels.isEmpty { removePanelsFromDesktop(unavailablePanels) }
+    if needsRelayout {
+      relayoutPanels(anchor: discoveryAnchor)
+    }
 
     let snapshot = panels
     for panel in snapshot {
@@ -2400,16 +2898,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     panel.reorderDragEnded = { [weak self] panel in self?.endReorder(from: panel) }
   }
 
-  private func removePanelsFromDesktop(_ panelsToRemove: [DiskPanel]) {
+  private func detachPanels(_ panelsToRemove: [DiskPanel]) {
     guard !panelsToRemove.isEmpty else { return }
-    let anchor = currentGroupAnchor()
     let identifiers = Set(panelsToRemove.map(ObjectIdentifier.init))
     for panel in panelsToRemove {
+      let id = ObjectIdentifier(panel)
+      groupDragStartOrigins.removeValue(forKey: id)
+      if reorderSource === panel {
+        reorderSource = nil
+        reorderBasePanels.removeAll()
+        reorderAnchor = nil
+      }
       panel.setReorderActive(false)
       panel.orderOut(nil)
     }
     panels.removeAll { identifiers.contains(ObjectIdentifier($0)) }
-    if !panels.isEmpty { relayoutPanels(anchor: anchor ?? defaultGroupAnchor()) }
+    if !reorderBasePanels.isEmpty {
+      reorderBasePanels.removeAll { identifiers.contains(ObjectIdentifier($0)) }
+    }
+  }
+
+  private func removePanelsFromDesktop(_ panelsToRemove: [DiskPanel]) {
+    guard !panelsToRemove.isEmpty else { return }
+    let anchor = preferredGroupAnchor()
+    detachPanels(panelsToRemove)
+    if !panels.isEmpty { relayoutPanels(anchor: anchor) }
   }
 
   private func removePanel(_ panel: DiskPanel) {
@@ -2421,7 +2934,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func applyLayout(_ newLayout: WidgetLayout) {
-    let anchor = currentGroupAnchor() ?? savedGroupAnchor() ?? defaultGroupAnchor()
+    let anchor = preferredGroupAnchor()
     let oldDiskImageSetting = layout.showDiskImagesInWidget
     layout = newLayout.normalized()
     layout.save()
@@ -2445,8 +2958,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func arrangePanels() {
     guard !panels.isEmpty else { return }
-    let anchor = currentGroupAnchor() ?? savedGroupAnchor() ?? defaultGroupAnchor()
-    relayoutPanels(anchor: anchor)
+    let anchor = clampedGroupAnchor(currentGroupAnchor() ?? preferredGroupAnchor())
+    saveGroupAnchor(anchor)
+    relayoutPanels(anchor: anchor, animated: true)
   }
 
   // Normal drag moves the whole widget group.
@@ -2470,7 +2984,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
     groupDragStartOrigins.removeAll()
-    if let anchor = currentGroupAnchor() { saveGroupAnchor(anchor) }
+    if let rawAnchor = currentGroupAnchor() {
+      let clamped = clampedGroupAnchor(rawAnchor)
+      saveGroupAnchor(clamped)
+      relayoutPanels(anchor: clamped)
+    }
+    if pendingRefreshAfterInteraction {
+      refresh()
+    }
   }
 
   // Option + drag reorders a single card while keeping the group anchored.
@@ -2494,8 +3015,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var reordered = reorderBasePanels
     reordered.remove(at: baseIndex)
     reordered.insert(source, at: targetIndex)
+    guard zip(panels, reordered).contains(where: { $0 !== $1 }) else { return }
+    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
     panels = reordered
-    relayoutPanels(anchor: reorderAnchor ?? defaultGroupAnchor())
+    relayoutPanels(anchor: reorderAnchor ?? defaultGroupAnchor(), animated: true)
   }
 
   private func endReorder(from source: DiskPanel) {
@@ -2505,6 +3028,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     reorderSource = nil
     reorderBasePanels.removeAll()
     reorderAnchor = nil
+    if pendingRefreshAfterInteraction {
+      refresh()
+    }
   }
 
   private func savedPanelOrder() -> [String] {
@@ -2519,11 +3045,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let saved = savedPanelOrder()
     guard !saved.isEmpty else { return }
     let rank = Dictionary(uniqueKeysWithValues: saved.enumerated().map { ($0.element, $0.offset) })
+    let currentOrder = Dictionary(
+      uniqueKeysWithValues: panels.enumerated().map { (ObjectIdentifier($0.element), $0.offset) })
     panels.sort {
       let a = rank[$0.orderingKey] ?? Int.max
       let b = rank[$1.orderingKey] ?? Int.max
       if a != b { return a < b }
-      return $0.diskName.localizedStandardCompare($1.diskName) == .orderedAscending
+      // Preserve existing desktop order for unranked drives so newly inserted
+      // drives append cleanly at the bottom without jumping ahead of existing cards.
+      return (currentOrder[ObjectIdentifier($0)] ?? 0) < (currentOrder[ObjectIdentifier($1)] ?? 0)
     }
   }
 
@@ -2538,6 +3068,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       DispatchQueue.main.async {
         guard let self else { return }
         self.diskImageScanInFlight = false
+        let isInitialLoad = !self.hasLoadedDiskImageMountPaths
         self.hasLoadedDiskImageMountPaths = true
         let changed = paths != self.diskImageMountPaths
         self.diskImageMountPaths = paths
@@ -2546,7 +3077,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.setDiskImageClassification(paths.contains(path))
           }
         }
-        if changed || !self.layout.showDiskImagesInWidget { self.refresh() }
+        if changed || (isInitialLoad && !self.layout.showDiskImagesInWidget) {
+          self.refresh()
+        }
       }
     }
   }
@@ -2590,9 +3123,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return NSPoint(x: first.frame.minX, y: first.frame.maxY)
   }
 
+  private func preferredGroupAnchor() -> NSPoint {
+    savedGroupAnchor() ?? currentGroupAnchor() ?? defaultGroupAnchor()
+  }
+
   private func defaultGroupAnchor() -> NSPoint {
-    guard let visible = NSScreen.main?.visibleFrame else { return NSPoint(x: 100, y: 700) }
-    return NSPoint(x: visible.maxX - layout.width - 28, y: visible.maxY - 28)
+    guard let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame else {
+      return NSPoint(x: 100, y: 700)
+    }
+    return NSPoint(
+      x: (visible.maxX - layout.width - 28).rounded(),
+      y: (visible.maxY - 28).rounded()
+    )
   }
 
   private func savedGroupAnchor() -> NSPoint? {
@@ -2601,39 +3143,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       let x = stored["x"] as? NSNumber,
       let y = stored["y"] as? NSNumber
     else { return nil }
-    return NSPoint(x: x.doubleValue, y: y.doubleValue)
+    let point = NSPoint(x: x.doubleValue, y: y.doubleValue)
+    guard point.x.isFinite, point.y.isFinite else { return nil }
+    return point
   }
 
   private func saveGroupAnchor(_ anchor: NSPoint) {
-    UserDefaults.standard.set(["x": anchor.x, "y": anchor.y], forKey: "disk-widget-group-position")
+    guard anchor.x.isFinite, anchor.y.isFinite else { return }
+    UserDefaults.standard.set(
+      ["x": anchor.x, "y": anchor.y],
+      forKey: "disk-widget-group-position"
+    )
   }
 
-  private func relayoutPanels(anchor: NSPoint) {
+  private func relayoutPanels(anchor: NSPoint, animated: Bool = false) {
     guard !panels.isEmpty else { return }
-    let anchor = clampedGroupAnchor(anchor)
-    var cursorY = anchor.y
-    let managedSize = NSSize(width: layout.width, height: layout.height)
-    for panel in panels {
-      panel.enforceManagedSize(managedSize)
-      cursorY -= layout.height
-      panel.setManagedPosition(NSPoint(x: anchor.x, y: cursorY))
-      panel.reassertDesktopLevel()
-      cursorY -= layout.stackSpacing
+    let clamped = clampedGroupAnchor(anchor)
+    // Only an explicit drag/arrange replaces a saved position. A temporary
+    // fallback while a screen is unavailable must not overwrite it.
+    if savedGroupAnchor() == nil && !NSScreen.screens.isEmpty {
+      saveGroupAnchor(clamped)
     }
-    saveGroupAnchor(anchor)
+    var cursorY = clamped.y
+    let managedSize = NSSize(width: layout.width.rounded(), height: layout.height.rounded())
+    let spacing = layout.stackSpacing.rounded()
+    for panel in panels {
+      cursorY -= managedSize.height
+      panel.setManagedFrame(
+        NSRect(
+          x: clamped.x,
+          y: cursorY,
+          width: managedSize.width,
+          height: managedSize.height
+        ),
+        animated: animated
+      )
+      panel.reassertDesktopLevel()
+      cursorY -= spacing
+    }
   }
 
   private func clampedGroupAnchor(_ anchor: NSPoint) -> NSPoint {
-    guard let visible = NSScreen.main?.visibleFrame else { return anchor }
-    let margin: CGFloat = 12
-    let minX = visible.minX + margin
-    let maxX = max(minX, visible.maxX - layout.width - margin)
-    let minTopY = visible.minY + layout.height + margin
-    let maxTopY = max(minTopY, visible.maxY - margin)
-    return NSPoint(
-      x: min(max(anchor.x, minX), maxX),
-      y: min(max(anchor.y, minTopY), maxTopY)
-    )
+    DesktopPlacement.clampedAnchor(
+      anchor, cardSize: NSSize(width: layout.width, height: layout.height),
+      visibleFrames: NSScreen.screens.map(\.visibleFrame))
   }
 }
 
