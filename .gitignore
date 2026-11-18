@@ -10,3 +10,4 @@ main.swift
 docs/*.tmp.png
 release/
 backups/
+archive/

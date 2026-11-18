@@ -7,14 +7,24 @@ func expect(_ value: @autoclosure () -> Bool, _ message: String) {
 
 extension AppDelegate {
   func runPlacementRegressions() {
+    let defaultLayout = WidgetLayout.factoryDefaults
+    expect(defaultLayout.width == 236 && defaultLayout.height == 90, "default card size parameters remain unchanged")
+    expect(defaultLayout.iconX == 16 && defaultLayout.iconY == 8 && defaultLayout.iconSize == 30, "default icon parameters remain unchanged")
+    expect(defaultLayout.nameX == 56 && defaultLayout.nameY == 11 && defaultLayout.nameFontSize == 13, "default name parameters remain unchanged")
+    expect(defaultLayout.statusX == 56 && defaultLayout.statusBottom == 15 && defaultLayout.statusFontSize == 10, "default status parameters remain unchanged")
+    expect(defaultLayout.ringX == 12 && defaultLayout.ringY == 7 && defaultLayout.ringSize == 44 && defaultLayout.ringTextFontSize == 9, "default ring parameters remain unchanged")
+    expect(defaultLayout.ejectX == 64 && defaultLayout.ejectY == 7 && defaultLayout.ejectSize == 22, "default eject button parameters remain unchanged")
+    expect(defaultLayout.cornerRadius == 18 && defaultLayout.stackSpacing == 12 && abs(defaultLayout.opacity - 0.70) < 0.001, "default corner radius, spacing, and opacity remain unchanged")
+
     let first = DiskPanel(diskName: "Test A", initialVolumeUUID: "UUID-A", initialLayout: layout)
     let second = DiskPanel(diskName: "Test B", initialVolumeUUID: "UUID-B", initialLayout: layout)
     panels = [first, second]
     defer { panels.forEach { $0.orderOut(nil) } }
 
-    expect(first.collectionBehavior.contains(.transient), "cards use Mission Control hiding")
+    expect(first.collectionBehavior.contains(.stationary), "cards stay pinned on desktop click")
     expect(first.collectionBehavior.contains(.canJoinAllSpaces), "cards return on every ordinary desktop")
-    expect(!first.collectionBehavior.contains(.stationary), "cards do not opt out of Mission Control")
+    expect(first.collectionBehavior.contains(.ignoresCycle), "cards do not enter window cycle")
+    expect(first.collectionBehavior.contains(.fullScreenNone), "cards stay on desktop spaces and do not join fullscreen app spaces")
     expect(first.level.rawValue < NSWindow.Level.normal.rawValue, "cards remain below normal windows")
     expect(!first.canBecomeKey && !first.canBecomeMain, "cards never steal key or main window focus")
     expect(first.contentView?.layer?.cornerCurve == .continuous, "cards use native continuous squircle corners")
@@ -33,6 +43,13 @@ extension AppDelegate {
       first.representsVolume(name: "Renamed A", uuid: "UUID-A"),
       "renamed volume with matching UUID stays bound to its card"
     )
+
+    let placeholder = DiskPanel(diskName: "Preview", isPreviewPlaceholder: true, initialLayout: layout)
+    expect(
+      !placeholder.representsVolume(name: "Preview", uuid: nil),
+      "preview placeholder never matches real mounted volumes"
+    )
+    placeholder.orderOut(nil)
 
     for screen in NSScreen.screens {
       let point = NSPoint(x: screen.visibleFrame.minX + 100, y: screen.visibleFrame.maxY - 100)
