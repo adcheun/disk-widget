@@ -15,7 +15,7 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			5jZsDFddoN5niz5YdCyXo347cPE=
+			VlPiwo1X91JcNtPe90+qkeedGH0=
 			</data>
 			<key>requirement</key>
 			<string>identifier "local.adc.disk-widget.widget" and anchor apple generic and certificate leaf[subject.CN] = "Apple Development: andy.chan.zero@gmail.com (QQCYBBX246)" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */</string>

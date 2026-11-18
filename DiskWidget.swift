@@ -2850,6 +2850,17 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
     return !formatDesc.contains("autofs") && !formatDesc.contains("devicefs")
   }
 
+  private static func isSystemDarkMode(view: NSView? = nil) -> Bool {
+    if let appearance = NSApp?.effectiveAppearance ?? view?.effectiveAppearance {
+      return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+    return UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+  }
+
+  func refreshAppearanceForSystemThemeChange() {
+    updateAppearance()
+  }
+
   private func updateAppearance() {
     guard surface != nil else { return }
 
@@ -2862,9 +2873,8 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
     }
 
     let isGlassActive = (glassBackgroundView != nil)
-    let isDark =
-      isGlassActive
-      || surface.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    let systemIsDark = Self.isSystemDarkMode(view: surface)
+    let isDark = isGlassActive || systemIsDark
     let isActiveOnDesktop =
       !dimWhenDesktopInactive || isDesktopActive || isCardHovered || isEjectHovered
       || isDropTarget || isReorderActive
@@ -2892,16 +2902,38 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
           glass.isHidden = !showGlass
         }
         if showGlass {
-          if shouldDimIdle || activeMode == .sheerGlass {
-            glass.tintColor = NSColor(
-              srgbRed: 0, green: 0, blue: 0, alpha: max(0.04, min(0.80, backgroundOpacity)))
+          if shouldDimIdle {
+            if systemIsDark {
+              glass.tintColor = NSColor(
+                srgbRed: 0.03, green: 0.035, blue: 0.05,
+                alpha: min(0.88, 0.44 + backgroundOpacity * 0.44))
+            } else {
+              glass.tintColor = NSColor(
+                srgbRed: 0, green: 0, blue: 0, alpha: max(0.04, min(0.80, backgroundOpacity)))
+            }
+          } else if activeMode == .sheerGlass {
+            if systemIsDark {
+              glass.tintColor = NSColor(
+                srgbRed: 0.02, green: 0.025, blue: 0.04,
+                alpha: min(0.76, 0.24 + backgroundOpacity * 0.50))
+            } else {
+              glass.tintColor = NSColor(
+                srgbRed: 0, green: 0, blue: 0, alpha: max(0.04, min(0.80, backgroundOpacity)))
+            }
           } else if activeMode == .darkSlate {
             glass.tintColor = NSColor(
-              srgbRed: 0, green: 0, blue: 0, alpha: max(0.08, backgroundOpacity * 0.5))
+              srgbRed: 0, green: 0, blue: 0,
+              alpha: systemIsDark ? max(0.22, backgroundOpacity * 0.55) : max(0.08, backgroundOpacity * 0.5))
           } else {
-            glass.tintColor = NSColor(
-              srgbRed: 0.08, green: 0.07, blue: 0.09,
-              alpha: max(0.04, min(0.78, backgroundOpacity)))
+            if systemIsDark {
+              glass.tintColor = NSColor(
+                srgbRed: 0.035, green: 0.04, blue: 0.06,
+                alpha: min(0.88, 0.42 + backgroundOpacity * 0.46))
+            } else {
+              glass.tintColor = NSColor(
+                srgbRed: 0.08, green: 0.07, blue: 0.09,
+                alpha: max(0.04, min(0.78, backgroundOpacity)))
+            }
           }
         } else {
           glass.tintColor = nil
@@ -3011,11 +3043,16 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
       } else if isGlassActive {
         if isActiveOnDesktop && isBackgroundVisible {
           switch activeMode {
-          case .nativeFrosted: borderColor = NSColor.white.withAlphaComponent(0.22)
+          case .nativeFrosted:
+            borderColor = NSColor.white.withAlphaComponent(systemIsDark ? 0.16 : 0.22)
           case .darkSlate: borderColor = NSColor.white.withAlphaComponent(0.11)
-          case .sheerGlass: borderColor = NSColor.white.withAlphaComponent(0.18)
+          case .sheerGlass:
+            borderColor = NSColor.white.withAlphaComponent(systemIsDark ? 0.14 : 0.18)
           }
           borderWidth = 0.8
+        } else if systemIsDark && isBackgroundVisible {
+          borderColor = NSColor.white.withAlphaComponent(0.13)
+          borderWidth = 0.75
         } else {
           borderColor = .clear
           borderWidth = 0
@@ -3053,13 +3090,32 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
       if isGlassActive {
         if !isBackgroundVisible {
           surfaceBaseLayer.isHidden = true
-        } else if shouldDimIdle || activeMode == .sheerGlass {
+        } else if shouldDimIdle {
           surfaceBaseLayer.isHidden = false
           surfaceBaseLayer.backgroundColor =
-            NSColor(srgbRed: 0.06, green: 0.07, blue: 0.09, alpha: backgroundOpacity * 0.38).cgColor
+            (systemIsDark
+              ? NSColor(
+                srgbRed: 0.045, green: 0.05, blue: 0.07,
+                alpha: min(0.76, 0.36 + backgroundOpacity * 0.40))
+              : NSColor(
+                srgbRed: 0.06, green: 0.07, blue: 0.09, alpha: backgroundOpacity * 0.38)
+            ).cgColor
+        } else if activeMode == .sheerGlass {
+          surfaceBaseLayer.isHidden = false
+          surfaceBaseLayer.backgroundColor =
+            (systemIsDark
+              ? NSColor(
+                srgbRed: 0.035, green: 0.04, blue: 0.06,
+                alpha: min(0.62, 0.16 + backgroundOpacity * 0.44))
+              : NSColor(
+                srgbRed: 0.06, green: 0.07, blue: 0.09, alpha: backgroundOpacity * 0.38)
+            ).cgColor
         } else if activeMode == .darkSlate {
           surfaceBaseLayer.isHidden = false
-          let slateAlpha = max(0.15, min(0.96, 0.25 + backgroundOpacity * 0.72))
+          let slateAlpha =
+            systemIsDark
+            ? max(0.42, min(0.97, 0.42 + backgroundOpacity * 0.54))
+            : max(0.15, min(0.96, 0.25 + backgroundOpacity * 0.72))
           surfaceBaseLayer.backgroundColor =
             NSColor(
               srgbRed: 36.0 / 255.0, green: 42.0 / 255.0, blue: 49.0 / 255.0, alpha: slateAlpha
@@ -3067,7 +3123,13 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
         } else {
           surfaceBaseLayer.isHidden = false
           surfaceBaseLayer.backgroundColor =
-            NSColor(srgbRed: 0.14, green: 0.13, blue: 0.16, alpha: backgroundOpacity * 0.52).cgColor
+            (systemIsDark
+              ? NSColor(
+                srgbRed: 0.05, green: 0.055, blue: 0.075,
+                alpha: min(0.78, 0.38 + backgroundOpacity * 0.42))
+              : NSColor(
+                srgbRed: 0.14, green: 0.13, blue: 0.16, alpha: backgroundOpacity * 0.52)
+            ).cgColor
         }
       } else if !isBackgroundVisible {
         surfaceBaseLayer.isHidden = true
@@ -3086,21 +3148,37 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
         ambientGradientLayer.isHidden = false
         if shouldDimIdle {
           let topSheen =
-            NSColor.white.withAlphaComponent(0.01 + 0.02 * backgroundOpacity).cgColor
-          let midSheen = NSColor.clear.cgColor
+            NSColor.white.withAlphaComponent(
+              systemIsDark ? 0.02 + 0.02 * backgroundOpacity : 0.01 + 0.02 * backgroundOpacity
+            ).cgColor
+          let midSheen =
+            (systemIsDark ? NSColor.black.withAlphaComponent(0.06) : NSColor.clear).cgColor
           let bottomShade =
-            NSColor.black.withAlphaComponent(0.04 + 0.10 * backgroundOpacity).cgColor
+            NSColor.black.withAlphaComponent(
+              systemIsDark ? 0.16 + 0.18 * backgroundOpacity : 0.04 + 0.10 * backgroundOpacity
+            ).cgColor
           ambientGradientLayer.colors = [topSheen, midSheen, bottomShade]
         } else {
           switch activeMode {
           case .nativeFrosted:
-            ambientGradientLayer.colors = [
-              NSColor.white.withAlphaComponent(0.03 + 0.12 * backgroundOpacity).cgColor,
-              NSColor.white.withAlphaComponent(0.01 + 0.04 * backgroundOpacity).cgColor,
-              NSColor.black.withAlphaComponent(0.02 + 0.14 * backgroundOpacity).cgColor,
-            ]
+            if systemIsDark {
+              ambientGradientLayer.colors = [
+                NSColor.white.withAlphaComponent(0.03 + 0.04 * backgroundOpacity).cgColor,
+                NSColor.black.withAlphaComponent(0.06).cgColor,
+                NSColor.black.withAlphaComponent(0.18 + 0.20 * backgroundOpacity).cgColor,
+              ]
+            } else {
+              ambientGradientLayer.colors = [
+                NSColor.white.withAlphaComponent(0.03 + 0.12 * backgroundOpacity).cgColor,
+                NSColor.white.withAlphaComponent(0.01 + 0.04 * backgroundOpacity).cgColor,
+                NSColor.black.withAlphaComponent(0.02 + 0.14 * backgroundOpacity).cgColor,
+              ]
+            }
           case .darkSlate:
-            let slateAlpha = max(0.15, min(0.96, 0.25 + backgroundOpacity * 0.72))
+            let slateAlpha =
+              systemIsDark
+              ? max(0.42, min(0.97, 0.42 + backgroundOpacity * 0.54))
+              : max(0.15, min(0.96, 0.25 + backgroundOpacity * 0.72))
             ambientGradientLayer.colors = [
               NSColor(
                 srgbRed: 43.0 / 255.0, green: 49.0 / 255.0, blue: 56.0 / 255.0,
@@ -3117,9 +3195,13 @@ final class DiskPanel: NSPanel, NSWindowDelegate {
             ]
           case .sheerGlass:
             ambientGradientLayer.colors = [
-              NSColor.white.withAlphaComponent(0.02 + 0.04 * backgroundOpacity).cgColor,
+              NSColor.white.withAlphaComponent(
+                systemIsDark ? 0.02 + 0.03 * backgroundOpacity : 0.02 + 0.04 * backgroundOpacity
+              ).cgColor,
               NSColor.clear.cgColor,
-              NSColor.black.withAlphaComponent(0.04 + 0.14 * backgroundOpacity).cgColor,
+              NSColor.black.withAlphaComponent(
+                systemIsDark ? 0.12 + 0.18 * backgroundOpacity : 0.04 + 0.14 * backgroundOpacity
+              ).cgColor,
             ]
           }
         }
@@ -3438,13 +3520,23 @@ final class LayoutPreviewView: NSView {
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     let layout = layout.normalized()
+    let systemIsDark =
+      (NSApp?.effectiveAppearance ?? effectiveAppearance)
+      .bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 
     let stageRect = bounds.insetBy(dx: 8, dy: 2)
     let stagePath = NSBezierPath(roundedRect: stageRect, xRadius: 12, yRadius: 12)
-    if let stageGradient = NSGradient(colors: [
-      NSColor(srgbRed: 0.44, green: 0.39, blue: 0.48, alpha: 1.0),
-      NSColor(srgbRed: 0.70, green: 0.50, blue: 0.35, alpha: 1.0),
-    ]) {
+    let stageColors =
+      systemIsDark
+      ? [
+        NSColor(srgbRed: 0.24, green: 0.22, blue: 0.29, alpha: 1.0),
+        NSColor(srgbRed: 0.42, green: 0.29, blue: 0.21, alpha: 1.0),
+      ]
+      : [
+        NSColor(srgbRed: 0.44, green: 0.39, blue: 0.48, alpha: 1.0),
+        NSColor(srgbRed: 0.70, green: 0.50, blue: 0.35, alpha: 1.0),
+      ]
+    if let stageGradient = NSGradient(colors: stageColors) {
       stageGradient.draw(in: stagePath, angle: -24)
     }
 
@@ -3474,8 +3566,14 @@ final class LayoutPreviewView: NSView {
 
     switch layout.desktopActiveStyle {
     case 1:
-      let slateAlpha: CGFloat =
-        hasBackground ? max(0.15, min(0.96, 0.25 + layout.opacity * 0.72)) : 0.0
+      let slateAlpha: CGFloat
+      if !hasBackground {
+        slateAlpha = 0.0
+      } else if systemIsDark {
+        slateAlpha = max(0.42, min(0.97, 0.42 + layout.opacity * 0.54))
+      } else {
+        slateAlpha = max(0.15, min(0.96, 0.25 + layout.opacity * 0.72))
+      }
       cardFill = NSColor(
         srgbRed: 36.0 / 255.0, green: 42.0 / 255.0, blue: 49.0 / 255.0, alpha: slateAlpha)
       rimColor = NSColor.white.withAlphaComponent(hasBackground ? 0.22 : 0.12)
@@ -3487,9 +3585,16 @@ final class LayoutPreviewView: NSView {
       pillFill = NSColor.white.withAlphaComponent(0.10)
       barTrackColor = tokenBlue.withAlphaComponent(0.20)
     case 2:
-      let glassAlpha: CGFloat = hasBackground ? min(0.88, 0.08 + layout.opacity * 0.80) : 0.0
-      cardFill = NSColor(srgbRed: 0.06, green: 0.07, blue: 0.09, alpha: glassAlpha)
-      rimColor = NSColor.white.withAlphaComponent(hasBackground ? 0.32 : 0.14)
+      let glassAlpha: CGFloat
+      if !hasBackground {
+        glassAlpha = 0.0
+      } else if systemIsDark {
+        glassAlpha = min(0.84, 0.24 + layout.opacity * 0.60)
+      } else {
+        glassAlpha = min(0.88, 0.08 + layout.opacity * 0.80)
+      }
+      cardFill = NSColor(srgbRed: 0.04, green: 0.045, blue: 0.065, alpha: glassAlpha)
+      rimColor = NSColor.white.withAlphaComponent(hasBackground ? (systemIsDark ? 0.20 : 0.32) : 0.14)
       accent = layout.accentColor
       iconTint = layout.accentColor.withAlphaComponent(0.95)
       iconBadgeFill = NSColor.white.withAlphaComponent(0.14)
@@ -3498,9 +3603,19 @@ final class LayoutPreviewView: NSView {
       pillFill = NSColor.white.withAlphaComponent(0.14)
       barTrackColor = NSColor.white.withAlphaComponent(0.16)
     default:
-      let frostedAlpha: CGFloat = hasBackground ? min(0.90, 0.08 + layout.opacity * 0.82) : 0.0
-      cardFill = NSColor(srgbRed: 0.14, green: 0.13, blue: 0.16, alpha: frostedAlpha)
-      rimColor = NSColor.white.withAlphaComponent(hasBackground ? 0.36 : 0.14)
+      let frostedAlpha: CGFloat
+      if !hasBackground {
+        frostedAlpha = 0.0
+      } else if systemIsDark {
+        frostedAlpha = min(0.92, 0.42 + layout.opacity * 0.48)
+      } else {
+        frostedAlpha = min(0.90, 0.08 + layout.opacity * 0.82)
+      }
+      cardFill =
+        systemIsDark
+        ? NSColor(srgbRed: 0.045, green: 0.05, blue: 0.07, alpha: frostedAlpha)
+        : NSColor(srgbRed: 0.14, green: 0.13, blue: 0.16, alpha: frostedAlpha)
+      rimColor = NSColor.white.withAlphaComponent(hasBackground ? (systemIsDark ? 0.22 : 0.36) : 0.14)
       accent = nativeGreen
       iconTint = NSColor.white.withAlphaComponent(0.96)
       iconBadgeFill = NSColor.white.withAlphaComponent(0.16)
@@ -3926,6 +4041,10 @@ final class LayoutEditorWindowController: NSWindowController, NSWindowDelegate {
   func syncLayout(_ newLayout: WidgetLayout) {
     layout = newLayout.normalized()
     preview.layout = layout
+  }
+
+  func refreshPreviewForSystemAppearance() {
+    preview.needsDisplay = true
   }
 
   func updateCardPanels(_ newPanels: [DiskPanel]) {
@@ -4682,6 +4801,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var isObservingWidgetCommands = false
   private var globalMouseMonitor: Any?
   private var localMouseMonitor: Any?
+  private var appearanceObservation: NSKeyValueObservation?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     LSRegisterURL(Bundle.main.bundleURL as CFURL, true)
@@ -4760,6 +4880,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       self?.handleMouseDownEvent(event)
       return event
     }
+
+    appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+      DispatchQueue.main.async {
+        self?.handleSystemAppearanceChanged()
+      }
+    }
+    DistributedNotificationCenter.default().addObserver(
+      self,
+      selector: #selector(systemInterfaceThemeChanged(_:)),
+      name: Notification.Name("AppleInterfaceThemeChangedNotification"),
+      object: nil
+    )
+  }
+
+  @objc private func systemInterfaceThemeChanged(_ notification: Notification) {
+    DispatchQueue.main.async { [weak self] in
+      self?.handleSystemAppearanceChanged()
+    }
+  }
+
+  private func handleSystemAppearanceChanged() {
+    panels.forEach { $0.refreshAppearanceForSystemThemeChange() }
+    previewPlaceholderPanel?.refreshAppearanceForSystemThemeChange()
+    layoutEditor?.refreshPreviewForSystemAppearance()
   }
 
   private func setupStatusItem() {
@@ -4936,6 +5080,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       NSEvent.removeMonitor(localMouseMonitor)
       self.localMouseMonitor = nil
     }
+    appearanceObservation?.invalidate()
+    appearanceObservation = nil
+    DistributedNotificationCenter.default().removeObserver(self)
     unregisterWidgetCommandObserver()
     NSWorkspace.shared.notificationCenter.removeObserver(self)
     NotificationCenter.default.removeObserver(self)
