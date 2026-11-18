@@ -1,0 +1,1 @@
+e89a8415a28089e56c91992ce4d01fa819e1cb94d69ebdc65d0c73741e853092  DiskWidget-1.1.0-macOS-arm64.zip
