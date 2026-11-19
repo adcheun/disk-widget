@@ -3472,8 +3472,6 @@ final class SettingsGroupView: NSView {
     cardBackground.boxType = .custom
     cardBackground.cornerRadius = 10
     cardBackground.borderWidth = 0.75
-    cardBackground.borderColor = NSColor.separatorColor.withAlphaComponent(0.45)
-    cardBackground.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.65)
     cardBackground.translatesAutoresizingMaskIntoConstraints = false
 
     stack.orientation = .vertical
@@ -3508,6 +3506,33 @@ final class SettingsGroupView: NSView {
       card.trailingAnchor.constraint(equalTo: trailingAnchor),
       card.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
+
+    updateCardAppearanceColors()
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    updateCardAppearanceColors()
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    updateCardAppearanceColors()
+  }
+
+  func updateCardAppearanceColors() {
+    let appearance = NSApp?.effectiveAppearance ?? window?.effectiveAppearance ?? effectiveAppearance
+    let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    appearance.performAsCurrentDrawingAppearance {
+      cardBackground.borderColor =
+        isDark
+        ? NSColor.white.withAlphaComponent(0.11)
+        : NSColor.black.withAlphaComponent(0.08)
+      cardBackground.fillColor =
+        isDark
+        ? NSColor.controlBackgroundColor.withAlphaComponent(0.65)
+        : NSColor.white.withAlphaComponent(0.78)
+    }
   }
 
   required init?(coder: NSCoder) { nil }
@@ -4045,6 +4070,25 @@ final class LayoutEditorWindowController: NSWindowController, NSWindowDelegate {
 
   func refreshPreviewForSystemAppearance() {
     preview.needsDisplay = true
+    updateSettingsGroupColors()
+  }
+
+  private func updateSettingsGroupColors() {
+    func walk(_ view: NSView?) {
+      guard let view else { return }
+      if let group = view as? SettingsGroupView {
+        group.updateCardAppearanceColors()
+      }
+      for subview in view.subviews {
+        walk(subview)
+      }
+    }
+    walk(window?.contentView)
+    if let items = tabView?.tabViewItems {
+      for item in items {
+        walk(item.view)
+      }
+    }
   }
 
   func updateCardPanels(_ newPanels: [DiskPanel]) {
@@ -4680,6 +4724,7 @@ final class LayoutEditorWindowController: NSWindowController, NSWindowDelegate {
 
     window.makeKeyAndOrderFront(nil)
     showWindow(nil)
+    refreshPreviewForSystemAppearance()
     NSApp.activate(ignoringOtherApps: true)
     onVisibilityChanged?(true)
   }
